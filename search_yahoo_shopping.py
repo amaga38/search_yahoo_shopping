@@ -1,3 +1,4 @@
+import os
 import argparse
 import openpyxl
 
@@ -54,6 +55,8 @@ def main():
     print(args)
     keywords = load_keywords(args.keyword_file)
     appids = load_appids(args.appid_file)
+
+    os.makedirs(args.output, exist_ok=True)
     return 0
 
 
