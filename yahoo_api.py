@@ -50,35 +50,21 @@ def recieve_response(r:httpx.Response, client: httpx.Client):
 
 
 class SearchShops(threading.Thread):
+    MAX_RETURNED_RESULTS = 1000
     def __init__(self, appid, rData):
+        super(SearchShops, self).__init__()
         self.appid = appid
         self.rData = rData
-
-    def run(self):
-        return
-
-
-class searchItems:
-    MAX_RETURNED_RESULTS = 1000 # Yahoo APIの制限。取得できる検索結果の上限
-    def __init__(self, keywords:list, appids:list, output:str, max_number:int):
-        self.keywords = keywords
-        self.appids = appids
-        self.appid = self.appids[0]
-        self.output = output
-        self.output_fname = 'out'
-        self.max_number = max_number
         self.get_results = 100
         self.shops = {}
-        self.results = {}
-        self.tmr_cnt = 0 # 429: Too Many Requests を返却された回数
 
 
-    def __save_hits_shops(self, rData: dict):
+    def run(self):
         '''
         Yahoo! Shoppingの検索結果は、1000件までしか取得できない (start + results <= 1000)
         なので、検索結果が1000件に絞られるように値段幅を変更して店舗を全件取得
         '''
-        totalResults = rData['totalResultsAvailable']
+        totalResults = self.rData['totalResultsAvailable']
         checkedResults = 0
         pFrom, pTo = 1, 1000 # 初期値
         while checkedResults < totalResults:
@@ -86,7 +72,7 @@ class searchItems:
             while True:
                 params = create_query_params(self.appid,
                                     self.get_results,
-                                    {'query': rData['request']['query'],
+                                    {'query': self.rData['request']['query'],
                                     'price_from': pFrom,
                                     'price_to': pTo
                                     })
@@ -126,7 +112,24 @@ class searchItems:
                     print('set results', params['results'])
                 checkedResults += rReturned
             params['results'] = self.get_results
+            break
+        print('[1] search shops finish:', len(self.shops))
         return True
+
+
+class searchItems:
+    MAX_RETURNED_RESULTS = 1000 # Yahoo APIの制限。取得できる検索結果の上限
+    def __init__(self, keywords:list, appids:list, output:str, max_number:int):
+        self.keywords = keywords
+        self.appids = appids
+        self.appid = self.appids[0]
+        self.output = output
+        self.output_fname = 'out'
+        self.max_number = max_number
+        self.get_results = 100
+        self.shops = {}
+        self.results = {}
+        self.tmr_cnt = 0 # 429: Too Many Requests を返却された回数
 
 
     def run(self):
@@ -145,10 +148,9 @@ class searchItems:
             print('[+]Success: Initial Request')
 
             # save shops
-            if not self.__save_hits_shops(r.json()):
-                return -1
-            print(self.shops)
-            break
+            searchShopsThread = SearchShops(self.appids[0], r.json())
+            searchShopsThread.start()
+            '''
             while save_info_count < self.max_number:
                 print('[+]', params)
                 r = client.get(url=itemSearch_ep)
@@ -157,3 +159,7 @@ class searchItems:
                 print('Success')
                 break # for test
             break # for test
+            '''
+            while searchShopsThread.is_alive():
+                time.sleep(60)
+            print('[0] search keyword finish:', keyword)
