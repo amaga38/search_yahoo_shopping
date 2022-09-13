@@ -6,6 +6,7 @@ import threading
 
 itemSearch_ep = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
 max_rpm = 30 # max requests per minute
+MAX_RETURNED_RESULTS = 1000
 
 def create_query_params(appid, get_results, add_params={}):
     params = {'appid': appid,
@@ -48,15 +49,48 @@ def recieve_response(r:httpx.Response, client: httpx.Client):
         print('Status Code:', r.status_code, ', Text:', r.text)
         return None
 
+class SearchItemOfShop(threading.Thread):
+    def __init__(self, appid, shop_queue: queue.Queue):
+        super(SearchItemOfShop, self).__init__()
+        self.appid = appid
+        self.get_results = 100
+        self.shop_queue = shop_queue
+        self.items = []
+
+    def run(self):
+        '''
+        ショップごとの商品を安い方から規定数保存
+        '''
+        print('[{}] Start Search Item Thread'.format(self.native_id))
+        while True:
+            if self.shop_queue.empty():
+                time.sleep(10)
+                continue
+
+            shop = self.shop_queue.get()
+            # initial request
+            print('[{}] Initial Request {}'.format(self.native_id, shop['name']))
+            params = create_query_params(self.appid, self.get_results,
+                                {'seller_id': shop['seller_id']})
+            client = httpx.Client(params=params)
+            r = client.get(url=itemSearch_ep)
+            rdata = recieve_response(r, client)
+            totalResults = rdata['totalResultsAvailable']
+            print('[{}] {}, num: {}'.format(self.native_id, shop['name'], totalResults))
+            checkedResults = 0
+            pFrom, pTo = 1, 1000
+            #while checkedResults < totalResults:
+            #    availableResults = 0
 
 class SearchShops(threading.Thread):
-    MAX_RETURNED_RESULTS = 1000
-    def __init__(self, appid, rData):
+    def __init__(self, appid, rData, keyword, shop_queue:queue.Queue):
         super(SearchShops, self).__init__()
         self.appid = appid
         self.rData = rData
         self.get_results = 100
         self.shops = {}
+        self.keyword = keyword
+        self.shop_queue = shop_queue # SearchItemsOfShop にショップ情報を渡すキュー
 
 
     def run(self):
@@ -102,13 +136,17 @@ class SearchShops(threading.Thread):
                 rReturned = rdata['totalResultsReturned']
                 hits = rdata['hits']
                 for hit in hits:
-                    name = hit['seller']['name']
-                    self.shops[name] = {
-                            'sellerId': hit['seller']['sellerId'],
-                            'url': hit['seller']['url']}
+                    seller_id = hit['seller']['sellerId']
+                    if seller_id not in self.shops.keys():
+                        self.shops[seller_id] = {
+                            'seller_id': seller_id,
+                            'name': hit['seller']['name'],
+                            'url': hit['seller']['url'],
+                            'keyword': self.keyword}
+                        self.shop_queue.put(self.shops[seller_id])
                 params['start'] += self.get_results
-                if params['start'] + self.get_results > self.MAX_RETURNED_RESULTS:
-                    params['results'] = self.MAX_RETURNED_RESULTS - params['start']
+                if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
+                    params['results'] = MAX_RETURNED_RESULTS - params['start']
                     print('set results', params['results'])
                 checkedResults += rReturned
             params['results'] = self.get_results
@@ -133,6 +171,7 @@ class searchItems:
 
 
     def run(self):
+        shop_queue = queue.Queue()
         for keyword in self.keywords:
             print('[+]', keyword)
             save_info_count = 0
@@ -148,18 +187,16 @@ class searchItems:
             print('[+]Success: Initial Request')
 
             # save shops
-            searchShopsThread = SearchShops(self.appids[0], r.json())
+            searchShopsThread = SearchShops(self.appids[0], r.json(), keyword, shop_queue)
             searchShopsThread.start()
-            '''
-            while save_info_count < self.max_number:
-                print('[+]', params)
-                r = client.get(url=itemSearch_ep)
-                if not self.__recieve_response(r, client):
-                    break
-                print('Success')
-                break # for test
-            break # for test
-            '''
+
+            # save items of each shop
+            searchItemsOfShop = SearchItemOfShop(self.appid[-1], shop_queue)
+            searchItemsOfShop.start()
+
             while searchShopsThread.is_alive():
                 time.sleep(60)
             print('[0] search keyword finish:', keyword)
+
+        while searchItemsOfShop.is_alive():
+            time.sleep(60)
