@@ -2,6 +2,8 @@ import os
 import argparse
 import openpyxl
 
+from yahoo_api import searchItems
+
 def option():
     parser = argparse.ArgumentParser(
         description=''
@@ -23,9 +25,9 @@ def option():
                         help='appid',
                         default='appid.xlsx'
                         )
-    parser.add_argument('-n', '--number',
+    parser.add_argument('-m', '--max_number',
                         help='max number of search result',
-                        default='max_number')
+                        default=100)
     return parser.parse_args()
 
 def load_xlsx_cells(xlsx:str):
@@ -46,7 +48,8 @@ def load_keywords(keyword_file:str):
 
 
 def load_appids(appid_file: str):
-    appids = load_xlsx_cells(appid_file)
+    t = load_xlsx_cells(appid_file)
+    appids = list(map(lambda x: x.strip(), t))
     return appids
 
 
@@ -57,6 +60,8 @@ def main():
     appids = load_appids(args.appid_file)
 
     os.makedirs(args.output, exist_ok=True)
+    searchItem = searchItems(keywords, appids, args.output, args.max_number)
+    searchItem.run()
     return 0
 
 
