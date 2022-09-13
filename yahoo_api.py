@@ -1,5 +1,7 @@
+import os
 import time
 import httpx
+import openpyxl
 
 import queue
 import threading
@@ -68,6 +70,10 @@ class SearchItemOfShop(threading.Thread):
                 continue
 
             shop = self.shop_queue.get()
+            xlsx_fname = os.path.join(shop['shop_folder'], shop['shop_fname'])
+            xlsx_wb = openpyxl.Workbook()
+            xlsx_ws = xlsx_wb.active
+
             # initial request
             print('[{}] Initial Request {}'.format(self.native_id, shop['name']))
             params = create_query_params(self.appid, self.get_results,
@@ -77,19 +83,25 @@ class SearchItemOfShop(threading.Thread):
             rdata = recieve_response(r, client)
             totalResults = rdata['totalResultsAvailable']
             print('[{}] {}, num: {}'.format(self.native_id, shop['name'], totalResults))
+            xlsx_ws['A1'] = totalResults
+            xlsx_wb.save(xlsx_fname)
+
+            # 店舗の商品を検索してxlsxへ保存
+            # 商品名, 値段, 店舗のURL
             checkedResults = 0
             pFrom, pTo = 1, 1000
             #while checkedResults < totalResults:
             #    availableResults = 0
 
 class SearchShops(threading.Thread):
-    def __init__(self, appid, rData, keyword, shop_queue:queue.Queue):
+    def __init__(self, appid, rData, keyword, keyword_folder, shop_queue:queue.Queue):
         super(SearchShops, self).__init__()
         self.appid = appid
         self.rData = rData
         self.get_results = 100
         self.shops = {}
         self.keyword = keyword
+        self.keyword_folder = keyword_folder
         self.shop_queue = shop_queue # SearchItemsOfShop にショップ情報を渡すキュー
 
 
@@ -98,6 +110,11 @@ class SearchShops(threading.Thread):
         Yahoo! Shoppingの検索結果は、1000件までしか取得できない (start + results <= 1000)
         なので、検索結果が1000件に絞られるように値段幅を変更して店舗を全件取得
         '''
+        xlsx_fname = os.path.join(self.keyword_folder, 'shops.xlsx')
+        xlsx_wb = openpyxl.Workbook()
+        xlsx_ws = xlsx_wb.active
+        #xlsx_wb.title = u'ショップ情報'
+
         totalResults = self.rData['totalResultsAvailable']
         checkedResults = 0
         pFrom, pTo = 1, 1000 # 初期値
@@ -137,13 +154,26 @@ class SearchShops(threading.Thread):
                 hits = rdata['hits']
                 for hit in hits:
                     seller_id = hit['seller']['sellerId']
+                    seller_name = hit['seller']['name']
                     if seller_id not in self.shops.keys():
+                        shop_fname = seller_name + '_' + seller_id + '.xlsx'
+                        shop_folder = os.path.join(self.keyword_folder, 'shop')
+
                         self.shops[seller_id] = {
                             'seller_id': seller_id,
-                            'name': hit['seller']['name'],
+                            'name': seller_name,
                             'url': hit['seller']['url'],
-                            'keyword': self.keyword}
+                            'keyword': self.keyword,
+                            'shop_folder': shop_folder,
+                            'shop_fname': shop_fname}
                         self.shop_queue.put(self.shops[seller_id])
+                        # xlsxに追記
+                        # url, 店舗名, 店舗ごとのxlsxへのハイパーリンク
+                        xlsx_ws['A' + str(len(self.shops))] = hit['seller']['url']
+                        xlsx_ws['B' + str(len(self.shops))] = hit['seller']['name']
+                        xlsx_ws['C' + str(len(self.shops))].value = 'ファイルを開く'
+                        xlsx_ws['C' + str(len(self.shops))].hyperlink = os.path.join('shop', shop_fname)
+                        xlsx_wb.save(xlsx_fname)
                 params['start'] += self.get_results
                 if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
                     params['results'] = MAX_RETURNED_RESULTS - params['start']
@@ -174,24 +204,36 @@ class searchItems:
         shop_queue = queue.Queue()
         for keyword in self.keywords:
             print('[+]', keyword)
-            save_info_count = 0
+            keyword_folder = os.path.join(self.output,
+                                            keyword,
+                                            time.strftime('%Y%m%d_%H%M'))
+            try:
+                os.makedirs(keyword_folder, exist_ok=True)
+                os.makedirs(os.path.join(keyword_folder, 'shop'), exist_ok=True)
+            except Exception as e:
+                print(e)
+                return
 
-            print('[+]Initial Request')
             params = create_query_params(
                                 self.appid, self.get_results,
                                 {'query': keyword})
             client = httpx.Client(params=params)
-            r = client.get(url=itemSearch_ep)
+            request = client.build_request(method='GET', url=itemSearch_ep, params=params)
+            print('[+]Initial Request', request.url)
+            r = client.send(request)
+            #r = client.get(url=itemSearch_ep)
             if not recieve_response(r, client):
                 return -1
             print('[+]Success: Initial Request')
 
             # save shops
-            searchShopsThread = SearchShops(self.appids[0], r.json(), keyword, shop_queue)
+            searchShopsThread = SearchShops(self.appids[0],
+                                                r.json(), keyword,
+                                                keyword_folder, shop_queue)
             searchShopsThread.start()
 
             # save items of each shop
-            searchItemsOfShop = SearchItemOfShop(self.appid[-1], shop_queue)
+            searchItemsOfShop = SearchItemOfShop(self.appids[-1], shop_queue)
             searchItemsOfShop.start()
 
             while searchShopsThread.is_alive():
