@@ -1,11 +1,64 @@
 import time
 import httpx
 
+import queue
+import threading
+
 itemSearch_ep = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
 max_rpm = 30 # max requests per minute
 
-class searchItems:
+def create_query_params(appid, get_results, add_params={}):
+    params = {'appid': appid,
+                'results': get_results}
+    for k, v in add_params.items():
+        params[k] = v # 同一キーは上書き
+    return params
+
+
+def retry_request(client: httpx.Client):
     MAX_TMR_NUM = 5 # 429: Too Many Requests を連続で返却されたときの許容数
+    tmr_cnt = 1
+    while tmr_cnt < MAX_TMR_NUM:
+        print('...retry cnt:', tmr_cnt)
+        time.sleep(60) # 1分のチェックあたりまで待機
+        print('retry...')
+        r = client.get(url=itemSearch_ep)
+        if r.status_code == 200:
+            tmr_cnt = 0
+            return r
+        print('[-] Error', r.status_code, r.text)
+        tmr_cnt += 1
+    return None
+
+
+def recieve_response(r:httpx.Response, client: httpx.Client):
+    if r.status_code == 200:
+        rData = r.json()
+        print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'])
+        return r.json()
+    elif r.status_code == 429:
+        # Too Many Requests
+        print("[-]Error: Too Many Requests.")
+        r = retry_request(client)
+        if not r:
+            print('[-] Too Many Request')
+            return None
+        return r.json()
+    else:
+        print('Status Code:', r.status_code, ', Text:', r.text)
+        return None
+
+
+class SearchShops(threading.Thread):
+    def __init__(self, appid, rData):
+        self.appid = appid
+        self.rData = rData
+
+    def run(self):
+        return
+
+
+class searchItems:
     MAX_RETURNED_RESULTS = 1000 # Yahoo APIの制限。取得できる検索結果の上限
     def __init__(self, keywords:list, appids:list, output:str, max_number:int):
         self.keywords = keywords
@@ -17,15 +70,8 @@ class searchItems:
         self.get_results = 100
         self.shops = {}
         self.results = {}
-        self.req_start_utime = 0
         self.tmr_cnt = 0 # 429: Too Many Requests を返却された回数
 
-    def __create_query_params(self, add_params={}):
-        params = {'appid': self.appid,
-                    'results': self.get_results}
-        for k, v in add_params.items():
-            params[k] = v # 同一キーは上書き
-        return params
 
     def __save_hits_shops(self, rData: dict):
         '''
@@ -38,14 +84,15 @@ class searchItems:
         while checkedResults < totalResults:
             availableResults = 0
             while True:
-                params = self.__create_query_params({
-                                    'query': rData['request']['query'],
+                params = create_query_params(self.appid,
+                                    self.get_results,
+                                    {'query': rData['request']['query'],
                                     'price_from': pFrom,
                                     'price_to': pTo
                                     })
                 client = httpx.Client(params=params)
                 r = client.get(url=itemSearch_ep)
-                rdata = self.__recieve_response(r, client)
+                rdata = recieve_response(r, client)
                 availableResults = rdata['totalResultsAvailable']
                 if availableResults == 0:
                     pFrom, pTo = pTo + 1, pTo + 1000
@@ -63,7 +110,7 @@ class searchItems:
                 print(params)
                 client = httpx.Client(params=params)
                 r = client.get(url=itemSearch_ep)
-                rdata = self.__recieve_response(r, client)
+                rdata = recieve_response(r, client)
                 if not rdata:
                     return False
                 rReturned = rdata['totalResultsReturned']
@@ -81,53 +128,19 @@ class searchItems:
             params['results'] = self.get_results
         return True
 
-    def __recieve_response(self, r:httpx.Response, client: httpx.Client):
-        if r.status_code == 200:
-            rData = r.json()
-            print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'])
-            return r.json()
-        elif r.status_code == 429:
-            # Too Many Requests
-            print("[-]Error: Too Many Requests.")
-            r = self.__retry_request(client)
-            if not r:
-                print('[-] Too Many Request')
-                return None
-            return r.json()
-        else:
-            print('Status Code:', r.status_code, ', Text:', r.text)
-            return None
-
-
-    def __retry_request(self, client: httpx.Client):
-        self.tmr_cnt = 1
-        while self.tmr_cnt < self.MAX_TMR_NUM:
-            print('...retry cnt:', self.tmr_cnt)
-            now = time.time()
-            next = 60 - ((now - self.req_start_utime) % 60)
-            time.sleep(next + 10) # 1分のチェックあたりまで待機
-            print('retry...')
-            r = client.get(url=itemSearch_ep)
-            if r.status_code == 200:
-                self.req_start_utime = now
-                self.tmr_cnt = 0
-                return r
-            print('[-] Error', r.status_code, r.text)
-            self.tmr_cnt += 1
-        return None
-
 
     def run(self):
         for keyword in self.keywords:
             print('[+]', keyword)
             save_info_count = 0
-            self.req_start_utime = time.time()
 
             print('[+]Initial Request')
-            params = self.__create_query_params({'query': keyword})
+            params = create_query_params(
+                                self.appid, self.get_results,
+                                {'query': keyword})
             client = httpx.Client(params=params)
             r = client.get(url=itemSearch_ep)
-            if not self.__recieve_response(r, client):
+            if not recieve_response(r, client):
                 return -1
             print('[+]Success: Initial Request')
 
