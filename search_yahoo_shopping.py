@@ -4,6 +4,20 @@ import openpyxl
 
 from yahoo_api import searchItems
 
+from functools import wraps
+import time
+
+def stop_watch(func):
+    @wraps(func)
+    def wrapper(*args, **kargs):
+        start = time.perf_counter()
+        result = func(*args, **kargs)
+        elapsed_time = time.perf_counter() - start
+        print('Time: {} s ({} min)'.format(elapsed_time, elapsed_time//60))
+        return result
+    return wrapper
+
+
 def option():
     parser = argparse.ArgumentParser(
         description=''
@@ -53,6 +67,7 @@ def load_appids(appid_file: str):
     return appids
 
 
+@stop_watch
 def main():
     args = option()
     print(args)
