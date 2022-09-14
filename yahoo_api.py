@@ -54,6 +54,75 @@ def recieve_response(r:httpx.Response, client: httpx.Client):
         print('Status Code:', r.status_code, ', Text:', r.text, client.params)
         return None
 
+
+
+def create_price_range(params: dict, price_start=1):
+    price_range = []
+    pStart = price_start
+    local_params = {}
+    for k, v in params.items():
+        local_params[k] = v
+    # 降順で最大金額を取得
+    local_params['sort'] = '-price'
+    client = httpx.Client(params=local_params)
+    r = client.get(url=itemSearch_ep)
+    rData = recieve_response(r, client)
+    pStart, pEnd = price_start, rData['hits'][0]['price']
+    totalResults = rData['totalResultsAvailable']
+    tmp_list = [[totalResults, pStart, pEnd]]
+    if totalResults < MAX_RETURNED_RESULTS:
+        return tmp_list
+
+    # 検索結果がMAX_RETURNED_RESULTSに収まる価格範囲のリストを作成
+    local_params['sort'] = '+price'
+    pFrom, pTo = pStart, pEnd
+    while True:
+        if not tmp_list:
+            break
+        _, pFrom, pTo = tmp_list[-1]
+        local_params['price_from'] = pFrom
+        middle = (pFrom + pTo) // 2
+        local_params['price_to'] = middle
+        client = httpx.Client(params=local_params)
+        r = client.get(url=itemSearch_ep)
+        rData = recieve_response(r, client)
+        if not rData:
+            break
+        availableResults = rData['totalResultsAvailable']
+        if availableResults == 0:
+            tmp_list[-1][1] = middle + 1
+        elif availableResults < MAX_RETURNED_RESULTS:
+            price_range.append([availableResults, pFrom, middle])
+            tmp_list[-1][0] -= availableResults
+            tmp_list[-1][1] = middle + 1
+            if tmp_list[-1][0] == 0:
+                del tmp_list[-1]
+            elif tmp_list[-1][0] < MAX_RETURNED_RESULTS:
+                price_range.append(tmp_list.pop())
+        else:
+            new_elm = [availableResults, pFrom, middle]
+            tmp_list[-1][0] -= new_elm[0]
+            tmp_list[-1][1] = middle + 1
+            if tmp_list[-1][0] == 0:
+                del tmp_list[-1]
+            elif tmp_list[-1][0] < MAX_RETURNED_RESULTS:
+                price_range.append(tmp_list.pop())
+            elif tmp_list[-1][1] == tmp_list[-1][2]:
+                price_range.append(tmp_list.pop())
+
+            if pFrom == middle:
+                print('[+] cut results', middle, availableResults)
+                price_range.append(new_elm)
+            else:
+                tmp_list.append(new_elm)
+    price_range.sort(key=lambda x: x[1])
+    print('[+]Get Price-Range:', price_range)
+    S = 0
+    for pr in price_range:
+        S += pr[0]
+    assert S == totalResults
+    return price_range
+
 class SearchItemOfShop(threading.Thread):
     def __init__(self, appid, shop_queue: queue.Queue):
         super(SearchItemOfShop, self).__init__()
@@ -90,6 +159,11 @@ class SearchItemOfShop(threading.Thread):
 
             # 店舗の商品を検索してxlsxへ保存
             # 商品名, 値段, 店舗のURL
+            '''
+            price_range = create_price_range({'appid': self.appid,
+                                            'results': self.get_results,
+                                            'seller_id': shop['seller_id']})
+            '''
             checkedResults = 0
             if totalResults >= MAX_RETURNED_RESULTS:
                 client_minus = httpx.Client(params={'appid': self.appid,
@@ -193,20 +267,54 @@ class SearchShops(threading.Thread):
         self.keyword_folder = keyword_folder
         self.shop_queue = shop_queue # SearchItemsOfShop にショップ情報を渡すキュー
 
+        self.xlsx_fname = os.path.join(self.keyword_folder, 'shops.xlsx')
+        self.xlsx_wb = openpyxl.Workbook()
+        self.xlsx_ws = self.xlsx_wb.active
+        # 最初のデータのseller情報をショップ情報のスクレイプングスレッドへ投げておく
+        for hit in rData['hits']:
+            seller = hit['seller']
+            seller_id = seller['sellerId']
+            if seller_id not in self.shops.keys():
+                self.save_seller_info(seller)
+
+
+    def save_seller_info(self, hit_seller):
+        seller_name = hit_seller['name']
+        seller_id = hit_seller['sellerId']
+        seller_url = hit_seller['url']
+        shop_fname = seller_name + '_' + seller_id + '.xlsx'
+        shop_folder = os.path.join(self.keyword_folder, 'shop')
+
+        self.shops[seller_id] = {
+            'seller_id': seller_id,
+            'name': seller_name,
+            'url': seller_url,
+            'keyword': self.keyword,
+            'shop_folder': shop_folder,
+            'shop_fname': shop_fname}
+        self.shop_queue.put(self.shops[seller_id])
+        # xlsxに追記
+        # url, 店舗名, 店舗ごとのxlsxへのハイパーリンク
+        self.xlsx_ws['A' + str(len(self.shops))] = seller_url
+        self.xlsx_ws['B' + str(len(self.shops))] = seller_name
+        self.xlsx_ws['C' + str(len(self.shops))].value = 'ファイルを開く'
+        self.xlsx_ws['C' + str(len(self.shops))].hyperlink = os.path.join('shop', shop_fname)
+        self.xlsx_wb.save(self.xlsx_fname)
+
 
     def run(self):
         '''
         Yahoo! Shoppingの検索結果は、1000件までしか取得できない (start + results <= 1000)
         なので、検索結果が1000件に絞られるように値段幅を変更して店舗を全件取得
         '''
-        xlsx_fname = os.path.join(self.keyword_folder, 'shops.xlsx')
-        xlsx_wb = openpyxl.Workbook()
-        xlsx_ws = xlsx_wb.active
-        #xlsx_wb.title = u'ショップ情報'
-
         totalResults = self.rData['totalResultsAvailable']
         checkedResults = 0
 
+        '''
+        price_range = create_price_range(params={'appid': self.appid,
+                                                'results': self.get_results,
+                                                'query': self.keyword})
+        '''
         if totalResults >= MAX_RETURNED_RESULTS:
             client_minus = httpx.Client(params={'appid': self.appid,
                                                 'results': self.get_results,
@@ -281,26 +389,8 @@ class SearchShops(threading.Thread):
                 hits = rdata['hits']
                 for hit in hits:
                     seller_id = hit['seller']['sellerId']
-                    seller_name = hit['seller']['name']
                     if seller_id not in self.shops.keys():
-                        shop_fname = seller_name + '_' + seller_id + '.xlsx'
-                        shop_folder = os.path.join(self.keyword_folder, 'shop')
-
-                        self.shops[seller_id] = {
-                            'seller_id': seller_id,
-                            'name': seller_name,
-                            'url': hit['seller']['url'],
-                            'keyword': self.keyword,
-                            'shop_folder': shop_folder,
-                            'shop_fname': shop_fname}
-                        self.shop_queue.put(self.shops[seller_id])
-                        # xlsxに追記
-                        # url, 店舗名, 店舗ごとのxlsxへのハイパーリンク
-                        xlsx_ws['A' + str(len(self.shops))] = hit['seller']['url']
-                        xlsx_ws['B' + str(len(self.shops))] = hit['seller']['name']
-                        xlsx_ws['C' + str(len(self.shops))].value = 'ファイルを開く'
-                        xlsx_ws['C' + str(len(self.shops))].hyperlink = os.path.join('shop', shop_fname)
-                        xlsx_wb.save(xlsx_fname)
+                        self.save_seller_info(hit['seller'])
                 params['start'] += self.get_results
                 if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
                     params['results'] = MAX_RETURNED_RESULTS - params['start']
@@ -356,13 +446,14 @@ class searchItems:
             print('[+]Initial Request', request.url)
             r = client.send(request)
             #r = client.get(url=itemSearch_ep)
-            if not recieve_response(r, client):
+            rData = recieve_response(r, client)
+            if not rData:
                 return -1
             print('[+]Success: Initial Request')
 
             # save shops
             searchShopsThread = SearchShops(self.appids[0],
-                                                r.json(), keyword,
+                                                rData, keyword,
                                                 keyword_folder, shop_queue)
             searchShopsThread.start()
 
