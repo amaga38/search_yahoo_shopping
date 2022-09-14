@@ -9,6 +9,8 @@ import threading
 itemSearch_ep = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
 max_rpm = 30 # max requests per minute
 MAX_RETURNED_RESULTS = 1000
+MAX_ITEMS_NUM = 10000
+
 
 def create_query_params(appid, get_results, add_params={}):
     params = {'appid': appid,
@@ -37,18 +39,18 @@ def retry_request(client: httpx.Client):
 def recieve_response(r:httpx.Response, client: httpx.Client):
     if r.status_code == 200:
         rData = r.json()
-        print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'])
+        print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'], client.params)
         return r.json()
     elif r.status_code == 429:
         # Too Many Requests
-        print("[-]Error: Too Many Requests.")
+        print("[-]Error: Too Many Requests.", client.params)
         r = retry_request(client)
         if not r:
             print('[-] Too Many Request')
             return None
         return r.json()
     else:
-        print('Status Code:', r.status_code, ', Text:', r.text)
+        print('Status Code:', r.status_code, ', Text:', r.text, client.params)
         return None
 
 class SearchItemOfShop(threading.Thread):
@@ -77,21 +79,72 @@ class SearchItemOfShop(threading.Thread):
             # initial request
             print('[{}] Initial Request {}'.format(self.native_id, shop['name']))
             params = create_query_params(self.appid, self.get_results,
-                                {'seller_id': shop['seller_id']})
+                                {'seller_id': shop['seller_id'],
+                                    'sort': '+price'})
             client = httpx.Client(params=params)
             r = client.get(url=itemSearch_ep)
             rdata = recieve_response(r, client)
             totalResults = rdata['totalResultsAvailable']
             print('[{}] {}, num: {}'.format(self.native_id, shop['name'], totalResults))
-            xlsx_ws['A1'] = totalResults
-            xlsx_wb.save(xlsx_fname)
 
             # 店舗の商品を検索してxlsxへ保存
             # 商品名, 値段, 店舗のURL
             checkedResults = 0
             pFrom, pTo = 1, 1000
-            #while checkedResults < totalResults:
-            #    availableResults = 0
+            while checkedResults < totalResults:
+                availableResults = 0
+                if totalResults >= 1000:
+                    # 1000件以内の検索結果が収まるように検索クエリを調整
+                    while True:
+                        params['price_from'] = pFrom
+                        params['price_to'] = pTo
+                        client = httpx.Client(params=params)
+                        r = client.get(url=itemSearch_ep)
+                        rdata = recieve_response(r, client)
+                        if not rdata:
+                            return
+                        availableResults = rdata['totalResultsAvailable']
+                        if availableResults == 0:
+                            pFrom, pTo = pTo + 1, pTo + 1000
+                        elif availableResults < 1000:
+                            break
+                        else:
+                            pTo = (pFrom + pTo) // 2
+                        if pTo <= pFrom:
+                            print('[{}] cut same price.{}-{}.'.format(self.native_id, pFrom, pTo))
+                            availableResults = 1000
+                            break
+                else:
+                    availableResults = totalResults
+
+                pFrom, pTo = pTo + 1, pTo + 1000 # 次回用にアップデート
+                params['start'] = 1
+                while params['start'] < availableResults:
+                    print('[{}] ', params)
+                    client = httpx.Client(params=params)
+                    r = client.get(url=itemSearch_ep)
+                    rdata = recieve_response(r, client)
+                    if not rdata:
+                        return False
+                    rReturned = rdata['totalResultsReturned']
+                    hits = rdata['hits']
+                    for hit in hits:
+                        checkedResults += 1
+                        name = hit['name']
+                        price = hit['price']
+                        xlsx_ws['A' + str(checkedResults)] = name
+                        xlsx_ws['B' + str(checkedResults)] = price
+                        xlsx_ws['C' + str(checkedResults)] = shop['url']
+                        if checkedResults >= MAX_ITEMS_NUM:
+                            xlsx_wb.save(xlsx_fname)
+                            return
+                    params['start'] += self.get_results
+                    if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
+                        params['results'] = MAX_RETURNED_RESULTS - params['start']
+                params['results'] = self.get_results
+                xlsx_wb.save(xlsx_fname)
+
+
 
 class SearchShops(threading.Thread):
     def __init__(self, appid, rData, keyword, keyword_folder, shop_queue:queue.Queue):
@@ -120,20 +173,19 @@ class SearchShops(threading.Thread):
         pFrom, pTo = 1, 1000 # 初期値
         while checkedResults < totalResults:
             availableResults = 0
-            while True:
-                params = create_query_params(self.appid,
-                                    self.get_results,
-                                    {'query': self.rData['request']['query'],
-                                    'price_from': pFrom,
-                                    'price_to': pTo
-                                    })
+            params = create_query_params(self.appid,
+                                        self.get_results,
+                                        {'query': self.rData['request']['query']})
+            while totalResults >= 1000:
+                params['price_from'] = pFrom
+                params['price_to'] = pTo
                 client = httpx.Client(params=params)
                 r = client.get(url=itemSearch_ep)
                 rdata = recieve_response(r, client)
                 availableResults = rdata['totalResultsAvailable']
                 if availableResults == 0:
                     pFrom, pTo = pTo + 1, pTo + 1000
-                elif availableResults <= 1000:
+                elif availableResults < 1000:
                     break
                 else:
                     pTo = (pFrom + pTo) // 2
