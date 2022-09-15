@@ -47,7 +47,7 @@ $ pip install -r requirements.txt
 python search_yahoo_shopping.py
 ```
 
-keyword.xlsx に記載されたキーワードを上から順番に
+keyword.xlsx に記載されたキーワードを上から順番に検索し、店舗の出品商品情報を記録していきます。
 
 ## プログラムについて
 
