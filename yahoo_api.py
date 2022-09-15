@@ -448,7 +448,6 @@ class searchItems:
         searchItemsOfShop.start()
 
         for keyword in self.keywords:
-            print('[+]', keyword)
             keyword_folder = os.path.join(self.output,
                                             keyword,
                                             time.strftime('%Y%m%d_%H%M'))
@@ -466,7 +465,8 @@ class searchItems:
             rData = get_request(params=params)
             if not rData:
                 return -1
-            print('[+]Success: Initial Request')
+            print('[+] Success: Initial Request')
+            print('[+] keyword: {}, search result: {}'.format(keyword, rData['totalResultsAvailable']))
 
             # save shops
             searchShopsThread = SearchShops(self.appids[0],
