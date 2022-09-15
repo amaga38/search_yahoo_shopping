@@ -41,7 +41,8 @@ def option():
                         )
     parser.add_argument('-m', '--max_number',
                         help='max number of search result',
-                        default=100)
+                        type=int,
+                        default=10000)
     return parser.parse_args()
 
 def load_xlsx_cells(xlsx:str):

@@ -9,7 +9,6 @@ import threading
 itemSearch_ep = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
 max_rpm = 30 # max requests per minute
 MAX_RETURNED_RESULTS = 1000
-MAX_ITEMS_NUM = 10000
 
 
 def create_query_params(appid, get_results, add_params={}):
@@ -142,9 +141,10 @@ def create_price_range(params: dict, price_start=1):
     return price_range
 
 class SearchItemOfShop(threading.Thread):
-    def __init__(self, appid, shop_queue: queue.Queue):
+    def __init__(self, appid, max_items_number:int, shop_queue: queue.Queue):
         super(SearchItemOfShop, self).__init__()
         self.appid = appid
+        self.max_items_number = max_items_number
         self.get_results = 100
         self.shop_queue = shop_queue
         self.items = []
@@ -197,7 +197,7 @@ class SearchItemOfShop(threading.Thread):
                 pStart, pEnd = rdata['hits'][0]['price'], rdata['hits'][-1]['price']
 
             pFrom, pTo = pStart, pEnd
-            while checkedResults < totalResults and checkedResults < MAX_ITEMS_NUM:
+            while checkedResults < totalResults and checkedResults < self.max_items_number:
                 params['start'] = 1
                 availableResults = 0
                 resultsSave = [] # [(availableResults, pFrom, pTo), ...]
@@ -250,7 +250,7 @@ class SearchItemOfShop(threading.Thread):
 
                 while params['start'] < availableResults \
                         and params['start'] < MAX_RETURNED_RESULTS\
-                        and checkedResults < MAX_ITEMS_NUM:
+                        and checkedResults < self.max_items_number:
                     rdata = get_request(params=params)
                     if not rdata:
                         return False
@@ -263,7 +263,7 @@ class SearchItemOfShop(threading.Thread):
                         xlsx_ws['A' + str(checkedResults)] = name
                         xlsx_ws['B' + str(checkedResults)] = price
                         xlsx_ws['C' + str(checkedResults)] = shop['url']
-                        if checkedResults >= MAX_ITEMS_NUM:
+                        if checkedResults >= self.max_items_number:
                             xlsx_wb.save(xlsx_fname)
                             break
                     params['start'] += self.get_results
@@ -279,12 +279,13 @@ class SearchItemOfShop(threading.Thread):
 
 
 class SearchShops(threading.Thread):
-    def __init__(self, appid, rData, keyword, keyword_folder, shop_queue:queue.Queue):
+    def __init__(self, appid, max_number:int, rData, keyword, keyword_folder, shop_queue:queue.Queue):
         super(SearchShops, self).__init__()
         self.appid = appid
         self.rData = rData
         self.get_results = 100
         self.shops = {}
+        self.max_number = max_number
         self.keyword = keyword
         self.keyword_folder = keyword_folder
         self.shop_queue = shop_queue # SearchItemsOfShop にショップ情報を渡すキュー
@@ -444,7 +445,7 @@ class searchItems:
         shop_queue = queue.Queue()
 
         # save items of each shop
-        searchItemsOfShop = SearchItemOfShop(self.appids[-1], shop_queue)
+        searchItemsOfShop = SearchItemOfShop(self.appids[-1], self.max_number, shop_queue)
         searchItemsOfShop.start()
 
         for keyword in self.keywords:
@@ -470,6 +471,7 @@ class searchItems:
 
             # save shops
             searchShopsThread = SearchShops(self.appids[0],
+                                                self.max_number,
                                                 rData, keyword,
                                                 keyword_folder, shop_queue)
             searchShopsThread.start()
