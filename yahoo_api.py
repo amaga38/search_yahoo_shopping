@@ -24,9 +24,9 @@ def retry_request(client: httpx.Client):
     MAX_TMR_NUM = 5 # 429: Too Many Requests を連続で返却されたときの許容数
     tmr_cnt = 1
     while tmr_cnt < MAX_TMR_NUM:
-        print('...retry cnt:', tmr_cnt)
+        #print('...retry cnt:', tmr_cnt)
         time.sleep(60) # 1分のチェックあたりまで待機
-        print('retry...')
+        #print('retry...')
         r = client.get(url=itemSearch_ep)
         if r.status_code == 200:
             tmr_cnt = 0
@@ -40,11 +40,11 @@ def retry_request(client: httpx.Client):
 def recieve_response(r:httpx.Response, client: httpx.Client):
     if r.status_code == 200:
         rData = r.json()
-        print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'], client.params)
+        #print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'], client.params)
         return r.json()
     elif r.status_code == 429:
         # Too Many Requests
-        print("[-]Error: Too Many Requests.", client.params)
+        #print("[-]Error: Too Many Requests.", client.params)
         r = retry_request(client)
         if not r:
             print('[-] Too Many Request')
@@ -52,8 +52,10 @@ def recieve_response(r:httpx.Response, client: httpx.Client):
         return r.json()
     else:
         print('Status Code:', r.status_code, ', Text:', r.text, client.params)
-        return None
-
+        r = retry_request(client)
+        if not r:
+            return None
+        return r.json()
 
 
 def create_price_range(params: dict, price_start=1):
@@ -141,13 +143,14 @@ class SearchItemOfShop(threading.Thread):
                 time.sleep(10)
                 continue
 
+            start_time = time.perf_counter()
             shop = self.shop_queue.get()
             xlsx_fname = os.path.join(shop['shop_folder'], shop['shop_fname'])
             xlsx_wb = openpyxl.Workbook()
             xlsx_ws = xlsx_wb.active
 
             # initial request
-            print('[{}] Initial Request {}'.format(self.native_id, shop['name']))
+            #print('[{}] Initial Request {}'.format(self.native_id, shop['name']))
             params = create_query_params(self.appid, self.get_results,
                                 {'seller_id': shop['seller_id'],
                                     'sort': '+price'})
@@ -155,7 +158,7 @@ class SearchItemOfShop(threading.Thread):
             r = client.get(url=itemSearch_ep)
             rdata = recieve_response(r, client)
             totalResults = rdata['totalResultsAvailable']
-            print('[{}] {}, num: {}'.format(self.native_id, shop['name'], totalResults))
+            #print('[{}] {}, num: {}'.format(self.native_id, shop['name'], totalResults))
 
             # 店舗の商品を検索してxlsxへ保存
             # 商品名, 値段, 店舗のURL
@@ -203,10 +206,11 @@ class SearchItemOfShop(threading.Thread):
                         elif availableResults < 1000:
                             break
                         else:
+                            pFrom = rdata['hits'][0]['price']
                             pTo = (pFrom + pTo) // 2
 
                         if pFrom == params['price_to']:
-                            print('[{}] cut same price.{}-{}.'.format(self.native_id, pFrom, pTo))
+                            #print('[{}] cut same price.{}-{}.'.format(self.native_id, pFrom, pTo))
                             break
                         elif pTo <= pFrom:
                             pTo = pFrom
@@ -216,14 +220,14 @@ class SearchItemOfShop(threading.Thread):
                 pFrom, pTo = pTo + 1, pEnd # 次回用にアップデート
                 if resultsSave:
                     rs_reverse = resultsSave[::-1]
-                    print(rs_reverse)
+                    #print(rs_reverse)
                     for rs in rs_reverse:
                         if rs[0] - availableResults > 0:
-                            print('[+] set   pTo=', rs[2], rs)
+                            #print('[+] set   pTo=', rs[2], rs)
                             pTo = rs[2]
                             break
                         else:
-                            print('[+] set pFrom=', rs[2]+1, rs)
+                            #print('[+] set pFrom=', rs[2]+1, rs)
                             pFrom = rs[2] + 1
 
                 while params['start'] < availableResults \
@@ -253,6 +257,8 @@ class SearchItemOfShop(threading.Thread):
                 xlsx_wb.save(xlsx_fname)
                 if pFrom > pEnd:
                     break
+            elapsed_time = time.perf_counter() - start_time
+            print('[{}] {} finish. num: {}, time: {}s ({}min)'.format(self.native_id, shop['name'], checkedResults, elapsed_time, elapsed_time//60))
 
 
 
@@ -355,10 +361,11 @@ class SearchShops(threading.Thread):
                     elif availableResults < 1000:
                         break
                     else:
+                        pFrom = rdata['hits'][0]['price']
                         pTo = (pFrom + pTo) // 2
 
                     if pFrom == params['price_to']:
-                        print('[{}] cut same price. {}-{}.'.format(self.native_id, pFrom, pTo))
+                        #print('[{}] cut same price. {}-{}.'.format(self.native_id, pFrom, pTo))
                         break
                     elif pTo <= pFrom:
                         pTo = pFrom
@@ -370,16 +377,16 @@ class SearchShops(threading.Thread):
                 rs_reverse = resultsSave[::-1]
                 for rs in rs_reverse:
                     if rs[0] - availableResults > 0:
-                        print('[+]   pTo=', rs[2], rs)
+                        #print('[+]   pTo=', rs[2], rs)
                         pTo = rs[2]
                         break
                     else:
-                        print('[+] pFrom=', rs[2]+1, rs)
+                        #print('[+] pFrom=', rs[2]+1, rs)
                         pFrom = rs[2] + 1
 
             # save shops
             while params['start'] < availableResults and params['start'] < MAX_RETURNED_RESULTS:
-                print(params)
+                #print(params)
                 client = httpx.Client(params=params)
                 r = client.get(url=itemSearch_ep)
                 rdata = recieve_response(r, client)
@@ -394,12 +401,12 @@ class SearchShops(threading.Thread):
                 params['start'] += self.get_results
                 if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
                     params['results'] = MAX_RETURNED_RESULTS - params['start']
-                    print('set results', params['results'])
+                    #print('set results', params['results'])
                 checkedResults += rReturned
             params['results'] = self.get_results
             if pFrom > pEnd:
                 break
-        print('[1] search shops finish: ', self.keyword, len(self.shops))
+        print('[{}] search shops finish: {}, {}'.format(self.name, self.keyword, len(self.shops)))
         return True
 
 
