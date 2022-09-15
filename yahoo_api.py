@@ -75,7 +75,7 @@ def get_request(params: dict):
     return None
 
 
-def create_price_range(params: dict, price_start=1):
+def create_price_range(params: dict, price_start=1, max_item_number:int=10000):
     price_range = []
     pStart = price_start
     local_params = {}
@@ -95,9 +95,8 @@ def create_price_range(params: dict, price_start=1):
     # 検索結果がMAX_RETURNED_RESULTSに収まる価格範囲のリストを作成
     local_params['sort'] = '+price'
     pFrom, pTo = pStart, pEnd
-    while True:
-        if not tmp_list:
-            break
+    availableSum = 0
+    while tmp_list and availableSum < max_item_number:
         _, pFrom, pTo = tmp_list[-1]
         local_params['price_from'] = pFrom
         middle = (pFrom + pTo) // 2
@@ -116,28 +115,36 @@ def create_price_range(params: dict, price_start=1):
                 del tmp_list[-1]
             elif tmp_list[-1][0] < MAX_RETURNED_RESULTS:
                 price_range.append(tmp_list.pop())
+                if price_range[-1][0] >= 1000:
+                    availableSum += 1000
+                else:
+                    availableSum += price_range[-1][0]
         else:
             new_elm = [availableResults, pFrom, middle]
             tmp_list[-1][0] -= new_elm[0]
             tmp_list[-1][1] = middle + 1
             if tmp_list[-1][0] == 0:
                 del tmp_list[-1]
-            elif tmp_list[-1][0] < MAX_RETURNED_RESULTS:
+            elif tmp_list[-1][0] < MAX_RETURNED_RESULTS \
+                    or tmp_list[-1][1] == tmp_list[-1][2]:
                 price_range.append(tmp_list.pop())
-            elif tmp_list[-1][1] == tmp_list[-1][2]:
-                price_range.append(tmp_list.pop())
-
+                if price_range[-1][0] >= 1000:
+                    availableSum += 1000
+                else:
+                    availableSum += price_range[-1][0]
             if pFrom == middle:
                 print('[+] cut results', middle, availableResults)
                 price_range.append(new_elm)
+                if new_elm[0] >= 1000:
+                    availableSum += 1000
+                else:
+                    availableSum += new_elm[0]
             else:
                 tmp_list.append(new_elm)
+
+    if tmp_list:
+        price_range += tmp_list        
     price_range.sort(key=lambda x: x[1])
-    print('[+]Get Price-Range:', price_range)
-    S = 0
-    for pr in price_range:
-        S += pr[0]
-    assert S == totalResults
     return price_range
 
 class SearchItemOfShop(threading.Thread):
@@ -178,76 +185,22 @@ class SearchItemOfShop(threading.Thread):
 
             # 店舗の商品を検索してxlsxへ保存
             # 商品名, 値段, 店舗のURL
-            '''
+            start_time_pr = time.perf_counter()
             price_range = create_price_range({'appid': self.appid,
                                             'results': self.get_results,
                                             'seller_id': shop['seller_id']})
-            '''
+            elapsed_time_pr = time.perf_counter() - start_time_pr
+            print('[{}] {} finish. time: {}s ({}min) {}'.format(self.native_id, 'create_price_range', elapsed_time_pr, elapsed_time_pr//60, price_range))
             checkedResults = 0
-            if totalResults >= MAX_RETURNED_RESULTS:
-                params_minus ={'appid': self.appid,
-                                    'results': self.get_results,
-                                    'seller_id': shop['seller_id'],
-                                    'sort': '-price'}
-                r_minusData = get_request(params=params_minus)
-                if not r_minusData:
-                    continue
-                pStart, pEnd = rdata['hits'][0]['price'], r_minusData['hits'][0]['price']
-            else:
-                pStart, pEnd = rdata['hits'][0]['price'], rdata['hits'][-1]['price']
-
-            pFrom, pTo = pStart, pEnd
-            while checkedResults < totalResults and checkedResults < self.max_items_number:
+            for pr in price_range:
+                availableResults, pFrom, pTo = pr
+                params ={'appid': self.appid,
+                            'results': self.get_results,
+                            'seller_id': shop['seller_id'],
+                            'sort': '-price'}
                 params['start'] = 1
-                availableResults = 0
-                resultsSave = [] # [(availableResults, pFrom, pTo), ...]
-                if totalResults >= 1000:
-                    # 1000件以内の検索結果が収まるように検索クエリを調整
-                    while True:
-                        params['price_from'] = pFrom
-                        params['price_to'] = pTo
-                        rdata = get_request(params=params)
-                        if not rdata:
-                            break
-                        availableResults = rdata['totalResultsAvailable']
-                        if availableResults > 0:
-                            resultsSave.append((availableResults, pFrom, pTo))
-
-                        if availableResults == 0:
-                            if resultsSave:
-                                pFrom, pTo = pTo + 1, resultsSave[-1][2]
-                            else:
-                                pFrom, pTo = pTo + 1, pEnd
-                        elif availableResults < 1000:
-                            break
-                        else:
-                            pFrom = rdata['hits'][0]['price']
-                            pTo = (pFrom + pTo) // 2
-
-                        if pFrom == params['price_to']:
-                            #print('[{}] cut same price.{}-{}.'.format(self.native_id, pFrom, pTo))
-                            break
-                        elif pTo <= pFrom:
-                            pTo = pFrom
-                else:
-                    availableResults = totalResults
-
-                if not rdata:
-                    break
-
-                pFrom, pTo = pTo + 1, pEnd # 次回用にアップデート
-                if resultsSave:
-                    rs_reverse = resultsSave[::-1]
-                    #print(rs_reverse)
-                    for rs in rs_reverse:
-                        if rs[0] - availableResults > 0:
-                            #print('[+] set   pTo=', rs[2], rs)
-                            pTo = rs[2]
-                            break
-                        else:
-                            #print('[+] set pFrom=', rs[2]+1, rs)
-                            pFrom = rs[2] + 1
-
+                params['price_from'] = pFrom
+                params['price_to'] = pTo
                 while params['start'] < availableResults \
                         and params['start'] < MAX_RETURNED_RESULTS\
                         and checkedResults < self.max_items_number:
@@ -271,8 +224,7 @@ class SearchItemOfShop(threading.Thread):
                         params['results'] = MAX_RETURNED_RESULTS - params['start']
                 params['results'] = self.get_results
                 xlsx_wb.save(xlsx_fname)
-                if pFrom > pEnd:
-                    break
+
             elapsed_time = time.perf_counter() - start_time
             print('[{}] {} finish. num: {}, time: {}s ({}min)'.format(self.native_id, shop['name'], checkedResults, elapsed_time, elapsed_time//60))
 
