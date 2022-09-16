@@ -19,7 +19,7 @@ def create_query_params(appid, get_results, add_params={}):
     return params
 
 
-def retry_request(client: httpx.Client):
+def retry_request(client: httpx.Client, extra_appids=[]):
     MAX_TMR_NUM = 5 # 429: Too Many Requests を連続で返却されたときの許容数
     tmr_cnt = 1
     while tmr_cnt < MAX_TMR_NUM:
@@ -39,7 +39,7 @@ def retry_request(client: httpx.Client):
     return None
 
 
-def recieve_response(r:httpx.Response, client: httpx.Client):
+def recieve_response(r:httpx.Response, client: httpx.Client, extra_appids=[]):
     if r.status_code == 200:
         rData = r.json()
         #print('[+]Check results:', rData['totalResultsAvailable'], rData['totalResultsReturned'], rData['firstResultsPosition'], client.params)
@@ -47,27 +47,27 @@ def recieve_response(r:httpx.Response, client: httpx.Client):
     elif r.status_code == 429:
         # Too Many Requests
         #print("[-]Error: Too Many Requests.", client.params)
-        r = retry_request(client)
+        r = retry_request(client, extra_appids)
         if not r:
             print('[-] Too Many Request')
             return None
         return r.json()
     else:
         print('Status Code:', r.status_code, ', Text:', r.text, client.params)
-        r = retry_request(client)
+        r = retry_request(client, extra_appids)
         if not r:
             return None
         return r.json()
 
 
-def get_request(params: dict):
+def get_request(params: dict, extra_appids=[]):
     client = httpx.Client(params=params)
     try_cnt = 0
     MAX_RETRY_NUM = 5
     while try_cnt < MAX_RETRY_NUM:
         try:
             r = client.get(url=itemSearch_ep)
-            rData = recieve_response(r, client)
+            rData = recieve_response(r, client, extra_appids)
             return rData
         except:
             pass
@@ -147,10 +147,12 @@ def create_price_range(params: dict, price_start=1, max_item_number:int=10000):
     price_range.sort(key=lambda x: x[1])
     return price_range
 
+
 class SearchItemOfShop(threading.Thread):
-    def __init__(self, appid, max_items_number:int, shop_queue: queue.Queue):
+    def __init__(self, appid, max_items_number:int, shop_queue: queue.Queue, extra_appids:list):
         super(SearchItemOfShop, self).__init__()
         self.appid = appid
+        self.extra_appids = extra_appids
         self.max_items_number = max_items_number
         self.get_results = 100
         self.shop_queue = shop_queue
@@ -188,7 +190,9 @@ class SearchItemOfShop(threading.Thread):
             start_time_pr = time.perf_counter()
             price_range = create_price_range({'appid': self.appid,
                                             'results': self.get_results,
-                                            'seller_id': shop['seller_id']})
+                                            'seller_id': shop['seller_id']},
+                                            price_start=1,
+                                            max_item_number=self.max_items_number)
             elapsed_time_pr = time.perf_counter() - start_time_pr
             print('[{}] {} finish. time: {}s ({}min) {}'.format(self.native_id, 'create_price_range', elapsed_time_pr, elapsed_time_pr//60, price_range))
             checkedResults = 0
@@ -397,7 +401,8 @@ class searchItems:
         shop_queue = queue.Queue()
 
         # save items of each shop
-        searchItemsOfShop = SearchItemOfShop(self.appids[-1], self.max_number, shop_queue)
+        searchItemsOfShop = SearchItemOfShop(self.appids[-1], self.max_number,
+                                            shop_queue, self.appids[1:-1])
         searchItemsOfShop.start()
 
         for keyword in self.keywords:
