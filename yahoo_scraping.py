@@ -48,10 +48,9 @@ def get_item_list(html):
         item_link = item_name.attrs['href']
         item_price = li.select_one('div.elPriceItem > span.elPriceValue')
         item_price = item_price.next_element
-        print(item_price.replace(',', ''))
-        new_elm = (item_name.text.strip('\n'),
-                    item_name.attrs['href'],
-                    item_price.replace(',', ''))
+        new_elm = {'name': item_name.text.strip('\n'),
+                    'item_url': item_name.attrs['href'],
+                    'price': item_price.replace(',', '')}
         item_list.append(new_elm)
     return item_list
 
