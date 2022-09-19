@@ -39,6 +39,11 @@ class HttpClient(httpx.Client):
 def get_item_list(html):
     item_list = [] # [(name, link, price), ...]
     soup = BeautifulSoup(html, 'html.parser')
+    er = soup.select('div.mdSearchError > p.elError')
+    if er:
+        # 検索結果なし
+        return []
+
     ul = soup.select('.mdSearchResult > ul.elItems > li.elItem')
     if not ul:
         # 検索結果なし
@@ -82,6 +87,7 @@ def scraipe_yahoo_shopsite(url, pFrom=0, pTo=0):
         if not t:
             break
         item_list += t
+    # print(url, pFrom, pTo, len(item_list))
     return item_list
 
 

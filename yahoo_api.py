@@ -6,6 +6,9 @@ import openpyxl
 import queue
 import threading
 
+from yahoo_scraping import scraipe_yahoo_shopsite
+
+
 itemSearch_ep = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
 max_rpm = 30 # max requests per minute
 MAX_RETURNED_RESULTS = 1000
@@ -158,6 +161,40 @@ class SearchItemOfShop(threading.Thread):
         self.shop_queue = shop_queue
         self.items = []
 
+    def is_yahoo_shop_store(sel, shop_url):
+        return shop_url.startswith('https://store.shopping.yahoo.co.jp/')
+
+
+    def scraipe_yahoo_shop(self, shop, pFrom, pTo):
+        hits = []
+        shop_url = shop['url']
+        r = scraipe_yahoo_shopsite(shop_url, pFrom, pTo)
+        hits += r
+        return hits
+
+
+    def request_yahoo_api(self, shop, pFrom, pTo, availableResults, checkedResults):
+        hits = []
+        params ={'appid': self.appid,
+                    'results': self.get_results,
+                    'seller_id': shop['seller_id'],
+                    'sort': '+price'}
+        params['start'] = 1
+        params['price_from'] = pFrom
+        params['price_to'] = pTo
+        while params['start'] < availableResults \
+                and params['start'] < MAX_RETURNED_RESULTS\
+                and checkedResults + len(hits) < self.max_items_number:
+            rdata = get_request(params=params)
+            if not rdata:
+                return False
+            hits += rdata['hits']
+            params['start'] += self.get_results
+            if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
+                params['results'] = MAX_RETURNED_RESULTS - params['start']
+        return hits
+
+
     def run(self):
         '''
         ショップごとの商品を安い方から規定数保存
@@ -198,37 +235,26 @@ class SearchItemOfShop(threading.Thread):
             checkedResults = 0
             for pr in price_range:
                 availableResults, pFrom, pTo = pr
-                params ={'appid': self.appid,
-                            'results': self.get_results,
-                            'seller_id': shop['seller_id'],
-                            'sort': '-price'}
-                params['start'] = 1
-                params['price_from'] = pFrom
-                params['price_to'] = pTo
-                while params['start'] < availableResults \
-                        and params['start'] < MAX_RETURNED_RESULTS\
-                        and checkedResults < self.max_items_number:
-                    rdata = get_request(params=params)
-                    if not rdata:
-                        return False
-                    rReturned = rdata['totalResultsReturned']
-                    hits = rdata['hits']
-                    for hit in hits:
-                        checkedResults += 1
-                        name = hit['name']
-                        price = hit['price']
-                        xlsx_ws['A' + str(checkedResults)] = name
-                        xlsx_ws['B' + str(checkedResults)] = price
-                        xlsx_ws['C' + str(checkedResults)] = shop['url']
-                        if checkedResults >= self.max_items_number:
-                            xlsx_wb.save(xlsx_fname)
-                            break
-                    params['start'] += self.get_results
-                    if params['start'] + self.get_results > MAX_RETURNED_RESULTS:
-                        params['results'] = MAX_RETURNED_RESULTS - params['start']
-                params['results'] = self.get_results
-                xlsx_wb.save(xlsx_fname)
+                if availableResults >= MAX_RETURNED_RESULTS:
+                        if self.is_yahoo_shop_store(shop['url']):
+                            hits = self.scraipe_yahoo_shop(shop, pFrom, pTo)
+                        else:
+                            hits = self.request_yahoo_api(shop, pFrom, pTo, availableResults, checkedResults)
+                else:
+                    hits = self.request_yahoo_api(shop, pFrom, pTo, availableResults, checkedResults)
 
+                for hit in hits:
+                    checkedResults += 1
+                    name = hit['name']
+                    price = hit['price']
+                    xlsx_ws['A' + str(checkedResults)] = name
+                    xlsx_ws['B' + str(checkedResults)] = price
+                    xlsx_ws['C' + str(checkedResults)] = shop['url']
+                    if checkedResults >= self.max_items_number:
+                        break
+                xlsx_wb.save(xlsx_fname)
+                if checkedResults >= self.max_items_number:
+                    break
             elapsed_time = time.perf_counter() - start_time
             print('[{}] {} finish. num: {}, time: {}s ({}min)'.format(self.native_id, shop['name'], checkedResults, elapsed_time, elapsed_time//60))
 
