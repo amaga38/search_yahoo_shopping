@@ -1,4 +1,5 @@
 import os
+import glob
 import time
 import httpx
 import openpyxl
@@ -12,6 +13,7 @@ from yahoo_scraping import scraipe_yahoo_shopsite
 itemSearch_ep = 'https://shopping.yahooapis.jp/ShoppingWebService/V3/itemSearch'
 max_rpm = 30 # max requests per minute
 MAX_RETURNED_RESULTS = 1000
+Is_SearchShop_alive = True
 
 
 def create_query_params(appid, get_results, add_params={}):
@@ -199,11 +201,15 @@ class SearchItemOfShop(threading.Thread):
         '''
         ショップごとの商品を安い方から規定数保存
         '''
+        global Is_SearchShop_alive
         print('[{}] Start Search Item Thread'.format(self.native_id))
         while True:
             if self.shop_queue.empty():
-                time.sleep(10)
-                continue
+                if Is_SearchShop_alive:
+                    time.sleep(10)
+                    continue
+                else:
+                    break
 
             start_time = time.perf_counter()
             shop = self.shop_queue.get()
@@ -257,7 +263,7 @@ class SearchItemOfShop(threading.Thread):
                     break
             elapsed_time = time.perf_counter() - start_time
             print('[{}] {} finish. num: {}, time: {}s ({}min)'.format(self.native_id, shop['name'], checkedResults, elapsed_time, elapsed_time//60))
-
+        print('[{}] Finish Search Item Thread'.format(self.native_id))
 
 
 class SearchShops(threading.Thread):
@@ -462,7 +468,40 @@ class searchItems:
         return
 
 
+    def merge_items(self):
+        def get_new_output_ws(xlsx_cnt:int):
+            output_xlsx = os.path.join(self.output_folder,
+                                'items_all_{}.xlsx'.format(xlsx_cnt))
+            output_wb = openpyxl.Workbook(write_only=True)
+            output_ws = output_wb.create_sheet()
+            return (output_wb, output_ws, output_xlsx)
+
+        xlsx_cnt = 1
+        write_rows_cnt = 0
+        output_wb, output_ws, output_xlsx = get_new_output_ws(xlsx_cnt)
+        for keyword in self.keywords:
+            keyword_folder = os.path.join(self.output_folder, keyword, 'shop')
+            xlsx_files = glob.glob(keyword_folder + '/*.xlsx')
+            for xlsx_file in xlsx_files:
+                read_wb = openpyxl.load_workbook(xlsx_file, read_only=True)
+                read_ws = read_wb.active
+                for row in read_ws.iter_rows():
+                    name = row[0].value
+                    price = row[1].value
+                    store_url = row[2].value
+                    output_ws.append(row=[name, price, store_url])
+                    write_rows_cnt += 1
+                    if write_rows_cnt >= self.max_items_per_xlsx:
+                        output_wb.save(output_xlsx)
+                        xlsx_cnt += 1
+                        write_rows_cnt = 0
+                        output_wb, output_ws, output_xlsx = get_new_output_ws(xlsx_cnt)
+                read_wb.close()
+        output_wb.save(output_xlsx)
+
+
     def run(self):
+        global Is_SearchShop_alive
         shop_queue = queue.Queue()
 
         # save items of each shop
@@ -499,9 +538,14 @@ class searchItems:
             searchShopsThread.join()
             print('[0] search keyword finish:', keyword)
 
+        Is_SearchShop_alive = False
         # ショップ情報のxlsxを1つにマージ。重複排除
         self.merge_shops()
 
         # 商品検索完了するまで待ち
         searchItemsOfShop.join()
+        # 各ショップの商品情報をxlsxを1つにマージ。
+        # ただし、1つのxlsxの最大行数はdefault 50万行まで
+        # 超えたら、items_all_{number}.xlsxの形式で連番で作成
+        self.merge_items()
         return 0
