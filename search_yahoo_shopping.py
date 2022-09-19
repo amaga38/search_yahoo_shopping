@@ -68,15 +68,26 @@ def load_appids(appid_file: str):
     return appids
 
 
+def load_limit_conf(keyword_file):
+    wb = openpyxl.load_workbook(keyword_file)
+    ws = wb[wb.sheetnames[0]]
+
+    max_items_per_xlsx = int(ws['B1'].value)
+    max_shops = int(ws['C1'].value)
+    return (max_items_per_xlsx, max_shops)
+
+
 @stop_watch
 def main():
     args = option()
     print(args)
     keywords = load_keywords(args.keyword_file)
     appids = load_appids(args.appid_file)
+    max_items_per_xlsx, max_shops = load_limit_conf(args.keyword_file)
 
     os.makedirs(args.output, exist_ok=True)
-    searchItem = searchItems(keywords, appids, args.output, args.max_number)
+    searchItem = searchItems(keywords, appids, args.output, args.max_number,
+                                max_items_per_xlsx, max_shops)
     searchItem.run()
     return 0
 
