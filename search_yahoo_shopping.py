@@ -43,6 +43,10 @@ def option():
                         help='max number of search result',
                         type=int,
                         default=10000)
+    parser.add_argument('--only-search-store',
+                        help='ONLY Search stores related the keywords, output shops_all.xlsx',
+                        action='store_true',
+                        default=False)
     return parser.parse_args()
 
 def load_xlsx_cells(xlsx:str):
@@ -88,7 +92,10 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     searchItem = searchItems(keywords, appids, args.output, args.max_number,
                                 max_items_per_xlsx, max_shops)
-    searchItem.run()
+    if args.only_search_store:
+        searchItem.run_only_search_stores()
+    else:
+        searchItem.run()
     return 0
 
 

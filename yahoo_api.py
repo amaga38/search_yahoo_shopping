@@ -549,3 +549,41 @@ class searchItems:
         # 超えたら、items_all_{number}.xlsxの形式で連番で作成
         self.merge_items()
         return 0
+
+
+    def run_only_search_stores(self):
+        global Is_SearchShop_alive
+        shop_queue = queue.Queue()  # 作って通知いれるだけ。処理するスレッドなし
+
+        self.output_folder = os.path.join(self.output, time.strftime('%Y%m%d_%H%M'))
+        for keyword in self.keywords:
+            keyword_folder = os.path.join(self.output_folder, keyword)
+            try:
+                os.makedirs(keyword_folder, exist_ok=True)
+            except Exception as e:
+                print(e)
+                return -1
+
+            params = create_query_params(
+                                self.appid, self.get_results,
+                                {'query': keyword,
+                                'sort': '+price'})
+            rData = get_request(params=params)
+            if not rData:
+                return -1
+            print('[+] Success: Initial Request')
+            print('[+] keyword: {}, search result: {}'.format(keyword, rData['totalResultsAvailable']))
+
+            # save shops
+            searchShopsThread = SearchShops(self.appids[0],
+                                                self.max_number, self.max_shops,
+                                                rData, keyword,
+                                                keyword_folder, shop_queue)
+            searchShopsThread.start()
+
+            searchShopsThread.join()
+            print('[0] search keyword finish:', keyword)
+
+        # ショップ情報のxlsxを1つにマージ。重複排除
+        self.merge_shops()
+        return 0
