@@ -64,4 +64,38 @@ python search_yahoo_shopping.py
 
 keyword.xlsx に記載されたキーワードを上から順番に検索し、店舗の出品商品情報を記録していきます。
 
-## プログラムについて
+### 出力情報
+
+出力先は、`search_yahoo_shopping.py`と同じフォルダに`out`フォルダが作成され、以下のような階層でファイルが出力されます。
+
+```
+ - search_yahoo_shopping.py
+ - out
+   - <実行日時>
+     - shops_all.xlsx :各キーワード検索でヒットした店舗情報一覧を1つにまとめたもの (重複排除)
+     - items_all_<番号>.xlsx :各店舗毎の商品情報一覧 (<店舗名>_<店舗ID>.xlsx) を1つにまとめたもの
+     - <検索キーワード> : keyword.xlsxに記載されているキーワードに対応
+       - shops.xlsx: 検索キーワードでヒットした店舗情報一覧。出力情報 (店舗名, 店舗URL, 店舗ID)
+       - shop: 店舗毎の商品情報出力フォルダ
+         - <店舗名>_<店舗ID>.xlsx : 出力情報 (商品名, 値段, 店舗URL)
+```
+
+### 店舗検索だけの実行
+
+```
+python search_yahoo_shopping_stores.py
+```
+
+### 商品検索だけの実行
+
+検索する店舗情報が必要なので、同一フォルダに shops_all.xlsx が必要です。
+
+```
+python search_yahoo_shopping_items.py
+```
+
+または、オプションで shops_all.xlsx を指定してください。
+
+```
+python search_yahoo_shopping_items.py --shops-all-path .\out\<実行日時>\shops_all.xlsx
+```
