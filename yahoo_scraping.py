@@ -23,17 +23,25 @@ class HttpClient(httpx.Client):
 
 
     def get(self, url:str, params):
-        self.__wait_request()
-        r = super().get(url=url, params=params)
-        if r.status_code != 200:
-            for _ in range(self.MAX_RETRY):
-                self.__wait_request()
+        try_cnt = 0
+        MAX_RETRY_NUM = 5
+        while try_cnt < MAX_RETRY_NUM:
+            self.__wait_request()
+            try:
                 r = super().get(url=url, params=params)
-                if r.status_code == 200:
-                    break
-            if r.status_code != 200:
-                raise RuntimeError
-        return r
+                if r.status_code != 200:
+                    for _ in range(self.MAX_RETRY):
+                        self.__wait_request()
+                        r = super().get(url=url, params=params)
+                        if r.status_code == 200:
+                            break
+                    if r.status_code != 200:
+                        raise RuntimeError
+                return r
+            except:
+                pass
+            try_cnt += 1
+        return None
 
 
 def get_item_list(html):
@@ -60,7 +68,7 @@ def get_item_list(html):
     return item_list
 
 
-def scraipe_yahoo_shopsite(url, pFrom=0, pTo=0):
+def scraipe_yahoo_shopsite(url, pFrom=0, pTo=0, items_num=0):
     # Yahoo!ショッピングのショップ個別サイトの商品一覧情報を取得
     # 
     item_list = []
@@ -82,9 +90,21 @@ def scraipe_yahoo_shopsite(url, pFrom=0, pTo=0):
     item_list += get_item_list(r.text)
     for i in range(1, MAX_PAGE):
         params['page'] = i
-        r = client.get(url=search_url, params=params)
-        t = get_item_list(r.text)
-        if not t:
+
+        retry_cnt = 0
+        MAX_RETRY_NUM = 5
+        while retry_cnt < MAX_RETRY_NUM:
+            r = client.get(url=search_url, params=params)
+            t = get_item_list(r.text)
+            if not t:
+                if len(item_list) < items_num:
+                    retry_cnt += 1
+                    continue
+                else:
+                    return item_list
+            else:
+                break
+        if retry_cnt == MAX_RETRY_NUM:
             break
         item_list += t
     # print(url, pFrom, pTo, len(item_list))

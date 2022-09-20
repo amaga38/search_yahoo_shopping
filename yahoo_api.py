@@ -167,12 +167,9 @@ class SearchItemOfShop(threading.Thread):
         return shop_url.startswith('https://store.shopping.yahoo.co.jp/')
 
 
-    def scraipe_yahoo_shop(self, shop, pFrom, pTo):
-        hits = []
-        shop_url = shop['url']
-        r = scraipe_yahoo_shopsite(shop_url, pFrom, pTo)
-        hits += r
-        return hits
+    def scraipe_yahoo_shop(self, shop, pFrom, pTo, availableResults):
+        r = scraipe_yahoo_shopsite(shop['url'], pFrom, pTo, availableResults)
+        return r
 
 
     def request_yahoo_api(self, shop, pFrom, pTo, availableResults, checkedResults):
@@ -243,7 +240,7 @@ class SearchItemOfShop(threading.Thread):
                 availableResults, pFrom, pTo = pr
                 if availableResults >= MAX_RETURNED_RESULTS:
                         if self.is_yahoo_shop_store(shop['url']):
-                            hits = self.scraipe_yahoo_shop(shop, pFrom, pTo)
+                            hits = self.scraipe_yahoo_shop(shop, pFrom, pTo, availableResults)
                         else:
                             hits = self.request_yahoo_api(shop, pFrom, pTo, availableResults, checkedResults)
                 else:
