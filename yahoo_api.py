@@ -214,16 +214,6 @@ class SearchItemOfShop(threading.Thread):
             xlsx_wb = openpyxl.Workbook()
             xlsx_ws = xlsx_wb.active
 
-            # initial request
-            params = create_query_params(self.appid, self.get_results,
-                                {'seller_id': shop['seller_id'],
-                                    'sort': '+price'})
-            rdata = get_request(params=params)
-            if not rdata:
-                continue
-            totalResults = rdata['totalResultsAvailable']
-            print('[{}] Initial Request for {}, total results: {}'.format(self.native_id, shop['name'], totalResults))
-
             # 店舗の商品を検索してxlsxへ保存
             # 商品名, 値段, 店舗のURL
             start_time_pr = time.perf_counter()
@@ -263,7 +253,7 @@ class SearchItemOfShop(threading.Thread):
 
 
 class SearchShops(threading.Thread):
-    def __init__(self, appid, max_number:int, max_shops:int,
+    def __init__(self, appid, max_number:int, max_shops:int, min_item_per_shop:int,
                 rData, keyword, keyword_folder, shop_queue:queue.Queue):
         super(SearchShops, self).__init__()
         self.appid = appid
@@ -272,6 +262,8 @@ class SearchShops(threading.Thread):
         self.shops = {}
         self.max_number = max_number
         self.max_shops = max_shops
+        self.min_item_per_shop = min_item_per_shop
+        self.target_shop_cnt = 0
         self.keyword = keyword
         self.keyword_folder = keyword_folder
         self.shop_queue = shop_queue # SearchItemsOfShop にショップ情報を渡すキュー
@@ -303,12 +295,26 @@ class SearchShops(threading.Thread):
             'keyword': self.keyword,
             'shop_folder': shop_folder,
             'shop_fname': shop_fname}
+
+        # 検索をかける店舗の商品数の下限チェック
+        params = create_query_params(self.appid, self.get_results,
+                                    {'seller_id': seller_id})
+        rdata = get_request(params=params)
+        if not rdata:
+            return
+        totalResults = rdata['totalResultsAvailable']
+        if totalResults < self.min_item_per_shop:
+            return
+
+        # 店舗の商品情報を商品検索スレッドに登録、店舗情報をエクセルに出力
+        print('[{}] Item Count for {}, total results: {}'.format(self.native_id, seller_name, totalResults))
+        self.target_shop_cnt += 1
         self.shop_queue.put(self.shops[seller_id])
         # xlsxに追記
-        # url, 店舗名, 店舗ごとのxlsxへのハイパーリンク
-        self.xlsx_ws['A' + str(len(self.shops))] = seller_url
-        self.xlsx_ws['B' + str(len(self.shops))] = seller_name
-        self.xlsx_ws['C' + str(len(self.shops))] = seller_id
+        # url, 店舗名, 店舗ID
+        self.xlsx_ws['A' + str(self.target_shop_cnt)] = seller_url
+        self.xlsx_ws['B' + str(self.target_shop_cnt)] = seller_name
+        self.xlsx_ws['C' + str(self.target_shop_cnt)] = seller_id
         self.xlsx_wb.save(self.xlsx_fname)
 
 
@@ -392,7 +398,7 @@ class SearchShops(threading.Thread):
             # save shops
             while params['start'] < availableResults \
                     and params['start'] < MAX_RETURNED_RESULTS \
-                    and len(self.shops) < self.max_shops:
+                    and self.target_shop_cnt < self.max_shops:
                 #print(params)
                 rdata = get_request(params=params)
                 if not rdata:
@@ -400,7 +406,7 @@ class SearchShops(threading.Thread):
                 rReturned = rdata['totalResultsReturned']
                 hits = rdata['hits']
                 for hit in hits:
-                    if len(self.shops) >= self.max_shops:
+                    if self.target_shop_cnt >= self.max_shops:
                         break
                     seller_id = hit['seller']['sellerId']
                     if seller_id not in self.shops.keys():
@@ -412,7 +418,7 @@ class SearchShops(threading.Thread):
                     #print('set results', params['results'])
                 checkedResults += rReturned
             params['results'] = self.get_results
-            if pFrom > pEnd or len(self.shops) >= self.max_shops:
+            if pFrom > pEnd or self.target_shop_cnt >= self.max_shops:
                 break
         print('[{}] search shops finish: {}, {}'.format(self.name, self.keyword, len(self.shops)))
         return True
@@ -422,7 +428,8 @@ class searchItems:
     MAX_RETURNED_RESULTS = 1000 # Yahoo APIの制限。取得できる検索結果の上限
     def __init__(self, keywords:list, appids:list,
                     output:str, max_number:int,
-                    max_items_per_xlsx:int, max_shops:int):
+                    max_items_per_xlsx:int, max_shops:int,
+                    min_item_per_shop:int):
         self.keywords = keywords
         self.appids = appids
         self.appid = self.appids[0]
@@ -435,6 +442,7 @@ class searchItems:
         self.tmr_cnt = 0 # 429: Too Many Requests を返却された回数
         self.max_items_per_xlsx = max_items_per_xlsx
         self.max_shops = max_shops
+        self.min_item_per_shop = min_item_per_shop
 
 
     def merge_shops(self):
@@ -527,6 +535,7 @@ class searchItems:
             # save shops
             searchShopsThread = SearchShops(self.appids[0],
                                                 self.max_number, self.max_shops,
+                                                self.min_item_per_shop,
                                                 rData, keyword,
                                                 keyword_folder, shop_queue)
             searchShopsThread.start()
