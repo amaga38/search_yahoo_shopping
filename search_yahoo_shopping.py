@@ -42,11 +42,20 @@ def option():
     parser.add_argument('-m', '--max_number',
                         help='max number of search result',
                         type=int,
-                        default=10000)
+                        default=1000000)
     parser.add_argument('--only-search-store',
-                        help='ONLY Search stores related the keywords, output shops_all.xlsx',
+                        help='ONLY Search for stores related the keywords, output shops_all.xlsx',
                         action='store_true',
                         default=False)
+    parser.add_argument('--only-search-item',
+                        help='ONLY Search for items of stores related shops_all.xlsx specified',
+                        action='store_true',
+                        default=False)
+    parser.add_argument('--shops-all-path',
+                        help='specify shops_all.xlsx path to run --only-search-store option',
+                        default='shops_all.xlsx'
+                        )
+
     return parser.parse_args()
 
 def load_xlsx_cells(xlsx:str):
@@ -94,6 +103,8 @@ def main():
                                 max_items_per_xlsx, max_shops)
     if args.only_search_store:
         searchItem.run_only_search_stores()
+    elif args.only_search_item:
+        searchItem.run_only_search_items(args.shops_all_path)
     else:
         searchItem.run()
     return 0

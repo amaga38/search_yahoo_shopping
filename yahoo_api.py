@@ -312,8 +312,7 @@ class SearchShops(threading.Thread):
         # url, 店舗名, 店舗ごとのxlsxへのハイパーリンク
         self.xlsx_ws['A' + str(len(self.shops))] = seller_url
         self.xlsx_ws['B' + str(len(self.shops))] = seller_name
-        self.xlsx_ws['C' + str(len(self.shops))].value = 'ファイルを開く'
-        self.xlsx_ws['C' + str(len(self.shops))].hyperlink = os.path.join('shop', shop_fname)
+        self.xlsx_ws['C' + str(len(self.shops))] = seller_id
         self.xlsx_wb.save(self.xlsx_fname)
 
 
@@ -456,14 +455,15 @@ class searchItems:
             for row in read_ws.iter_rows():
                 url = row[0].value
                 name = row[1].value
+                id = row[2].value
                 if url not in shops.keys():
-                    shops[url] = name
-                    shops_queue.put((url, name))
+                    shops[url] = {"name": name, "seller_id": id}
+                    shops_queue.put((url, name, id))
             read_wb.close()
 
         while not shops_queue.empty():
-            shop_url, shop_name = shops_queue.get()
-            output_ws.append(row=[shop_url, shop_name])
+            shop_url, shop_name, seller_id = shops_queue.get()
+            output_ws.append(row=[shop_url, shop_name, seller_id])
         output_wb.save(output_xlsx)
         return
 
@@ -586,4 +586,48 @@ class searchItems:
 
         # ショップ情報のxlsxを1つにマージ。重複排除
         self.merge_shops()
+        return 0
+
+
+    def run_only_search_items(self, shops_all_path):
+        global Is_SearchShop_alive
+        shop_queue = queue.Queue()
+
+        if not os.path.exists(shops_all_path):
+            print('[-] Error: File Not Found {}'.format(shops_all_path))
+            return -1
+
+        # save items of each shop
+        searchItemsOfShop = SearchItemOfShop(self.appids[-1], self.max_number,
+                                            shop_queue, self.appids[1:-1])
+        searchItemsOfShop.start()
+
+        self.output_folder = os.path.join(self.output, time.strftime('%Y%m%d_%H%M'))
+        shop_folder = os.path.join(self.output_folder, 'shop')
+        try:
+            os.makedirs(shop_folder, exist_ok=True)
+        except Exception as e:
+            print(e)
+            return -1
+
+        read_wb = openpyxl.load_workbook(shops_all_path, read_only=True)
+        read_ws = read_wb.active
+        shops = {}
+        for row in read_ws.iter_rows():
+            url = row[0].value
+            name = row[1].value
+            id = row[2].value
+            shop_fname = name + '_' + id + '.xlsx'
+            shops[id] = {'seller_id': id,
+                            'name': name,
+                            'url': url,
+                            'shop_folder': shop_folder,
+                            'shop_fname': shop_fname}
+            shop_queue.put(shops[id])
+
+        Is_SearchShop_alive = False
+        searchItemsOfShop.join()
+
+        self.keywords = [""]
+        self.merge_items()
         return 0
