@@ -225,6 +225,11 @@ class SearchItemOfShop(threading.Thread):
             elapsed_time_pr = time.perf_counter() - start_time_pr
             #print('[{}] {} finish. time: {}s ({}min) {}'.format(self.native_id, 'create_price_range', elapsed_time_pr, elapsed_time_pr//60, price_range))
             checkedResults = 0
+
+            # 同一(商品名、価格)の重複削除。商品名と価格をキーに要素作成。値は使わないのでTrue
+            # エクセルへの出力前に重複確認
+            # items:= { ("NameA", priceA): True, ("NameA", priceB): True, ("NameB", priceA): True }
+            items = {}
             for pr in price_range:
                 availableResults, pFrom, pTo = pr
                 if availableResults >= MAX_RETURNED_RESULTS:
@@ -236,9 +241,13 @@ class SearchItemOfShop(threading.Thread):
                     hits = self.request_yahoo_api(shop, pFrom, pTo, availableResults, checkedResults)
 
                 for hit in hits:
-                    checkedResults += 1
                     name = hit['name']
                     price = hit['price']
+                    if (name, price) in items.keys():
+                        continue
+
+                    checkedResults += 1
+                    items[(name, price)] = True
                     xlsx_ws['A' + str(checkedResults)] = name
                     xlsx_ws['B' + str(checkedResults)] = price
                     xlsx_ws['C' + str(checkedResults)] = shop['url']
@@ -248,6 +257,7 @@ class SearchItemOfShop(threading.Thread):
                 if checkedResults >= self.max_items_number:
                     break
             elapsed_time = time.perf_counter() - start_time
+            items.clear()
             print('[{}] {} finish. num: {}, time: {}s ({}min)'.format(self.native_id, shop['name'], checkedResults, elapsed_time, elapsed_time//60))
         print('[{}] Finish Search Item Thread'.format(self.native_id))
 
@@ -307,8 +317,8 @@ class SearchShops(threading.Thread):
             return
 
         # 店舗の商品情報を商品検索スレッドに登録、店舗情報をエクセルに出力
-        print('[{}] Item Count for {}, total results: {}'.format(self.native_id, seller_name, totalResults))
         self.target_shop_cnt += 1
+        print('[{}] Item Count for {}, total results: {}'.format(self.target_shop_cnt, seller_name, totalResults))
         self.shop_queue.put(self.shops[seller_id])
         # xlsxに追記
         # url, 店舗名, 店舗ID
