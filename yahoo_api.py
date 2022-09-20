@@ -138,7 +138,7 @@ def create_price_range(params: dict, price_start=1, max_item_number:int=10000):
                 else:
                     availableSum += price_range[-1][0]
             if pFrom == middle:
-                print('[+] cut results', middle, availableResults)
+                #print('[+] cut results', middle, availableResults)
                 price_range.append(new_elm)
                 if new_elm[0] >= 1000:
                     availableSum += 1000
@@ -223,7 +223,6 @@ class SearchItemOfShop(threading.Thread):
                 continue
             totalResults = rdata['totalResultsAvailable']
             print('[{}] Initial Request for {}, total results: {}'.format(self.native_id, shop['name'], totalResults))
-            #print('[{}] {}, num: {}'.format(self.native_id, shop['name'], totalResults))
 
             # 店舗の商品を検索してxlsxへ保存
             # 商品名, 値段, 店舗のURL
@@ -234,7 +233,7 @@ class SearchItemOfShop(threading.Thread):
                                             price_start=1,
                                             max_item_number=self.max_items_number)
             elapsed_time_pr = time.perf_counter() - start_time_pr
-            print('[{}] {} finish. time: {}s ({}min) {}'.format(self.native_id, 'create_price_range', elapsed_time_pr, elapsed_time_pr//60, price_range))
+            #print('[{}] {} finish. time: {}s ({}min) {}'.format(self.native_id, 'create_price_range', elapsed_time_pr, elapsed_time_pr//60, price_range))
             checkedResults = 0
             for pr in price_range:
                 availableResults, pFrom, pTo = pr
