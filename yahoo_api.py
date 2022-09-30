@@ -592,6 +592,7 @@ class searchItems:
             # save shops
             searchShopsThread = SearchShops(self.appids[0],
                                                 self.max_number, self.max_shops,
+                                                self.min_item_per_shop,
                                                 rData, keyword,
                                                 keyword_folder, shop_queue)
             searchShopsThread.start()
